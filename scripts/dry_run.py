@@ -2,43 +2,37 @@
 """Local dry-run: exercises every module against live state.
 
 Run with `python scripts/dry_run.py` from repo root.
-Requires env vars set (or .env loaded) — same vars Cloud Routine uses.
+Requires env vars set — same vars Cloud Routine uses.
 Sends a Telegram test message to confirm wiring.
 """
 import sys
+from datetime import datetime
 from pathlib import Path
 
 # Allow `from lib import ...` when running from repo root
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from lib.alpaca_summary import get_stock_bot_summary
-from lib.git_state_reader import get_stock_bot_state
 from lib.kalshi_summary import get_kalshi_summary
 from lib.notify import send_jarvis
 
 
-def synthesize_brief(stock_state: dict, alpaca: dict, kalshi: dict) -> str:
+def synthesize_brief(alpaca: dict, kalshi: dict) -> str:
     """Format the 5-line brief."""
-    from datetime import datetime
     fire_time = datetime.now().strftime("%H:%M ET")
     lines = [f"🤖 Bot Status — {fire_time}"]
 
     # Stock-bot line
     if "error" in alpaca:
-        lines.append(f"Stock-bot: ⚠ Alpaca: {alpaca['error']}")
+        lines.append(f"Stock-bot: ⚠ {alpaca['error']}")
     else:
         eq = alpaca["equity"]
         n_pos = len(alpaca["positions"])
-        last_premkt = stock_state.get("last_run_premarket", "?")
-        last_council = stock_state.get("last_council_decision") or {}
-        last_council_str = (
-            f"{last_council.get('ticker','?')} {last_council.get('rating','?')}"
-            if "error" not in last_council else "?"
-        )
-        n_refl = stock_state.get("last_reflection_count", 0)
+        orders_today = alpaca.get("orders_today", 0)
+        open_orders = alpaca.get("open_orders", 0)
+        fire_status = "fired ✓" if orders_today > 0 else "no orders today"
         lines.append(
-            f"Stock-bot: ${eq:,.0f} ({n_pos}/4 pos). Premarket: {last_premkt}. "
-            f"Last council: {last_council_str}. Reflections: {n_refl}."
+            f"Stock-bot: ${eq:,.0f} ({n_pos} pos, {open_orders} open). Premarket: {fire_status}."
         )
 
     # Kalshi line
@@ -58,17 +52,13 @@ def synthesize_brief(stock_state: dict, alpaca: dict, kalshi: dict) -> str:
     if "error" not in alpaca:
         for p in alpaca.get("positions", []):
             if p["unrealized_plpc"] < -0.05:
-                flags.append(f"⚠ {p['symbol']} -{abs(p['unrealized_plpc'])*100:.1f}%")
-        if alpaca.get("open_orders", 0) > 0:
-            flags.append(f"{alpaca['open_orders']} open orders")
+                flags.append(f"⚠ {p['symbol']} {p['unrealized_plpc']*100:.1f}%")
     if "last_fill_age_hours" in kalshi and kalshi["last_fill_age_hours"]:
         if kalshi["last_fill_age_hours"] > 12:
             flags.append(f"⚠ Kalshi silent {kalshi['last_fill_age_hours']:.0f}h")
 
     if flags:
         lines.append("Heads-up: " + " • ".join(flags))
-    else:
-        lines.append("Heads-up: nothing flagged.")
 
     return "\n".join(lines)
 
@@ -76,19 +66,15 @@ def synthesize_brief(stock_state: dict, alpaca: dict, kalshi: dict) -> str:
 def main() -> int:
     print("=== bot-status-monitor dry-run ===\n")
 
-    print("[1/3] Pulling stock-bot state from GitHub...")
-    stock_state = get_stock_bot_state()
-    print(f"  -> {stock_state}\n")
-
-    print("[2/3] Pulling Alpaca summary...")
+    print("[1/2] Pulling Alpaca summary...")
     alpaca = get_stock_bot_summary()
     print(f"  -> {alpaca}\n")
 
-    print("[3/3] Pulling Kalshi summary...")
+    print("[2/2] Pulling Kalshi summary...")
     kalshi = get_kalshi_summary()
     print(f"  -> {kalshi}\n")
 
-    brief = synthesize_brief(stock_state, alpaca, kalshi)
+    brief = synthesize_brief(alpaca, kalshi)
     print("=== BRIEF ===")
     print(brief)
     print("=============\n")

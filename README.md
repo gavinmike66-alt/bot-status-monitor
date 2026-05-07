@@ -6,12 +6,13 @@ Cloud-side monitoring for Mike's bot stack. Runs as Anthropic Cloud Routines on 
 
 **Schedule (initial):** weekdays at 09:00, 12:00, 15:00, 17:30 ET.
 
-**What each fire does:**
-1. Pull stock-bot-agent main from GitHub, read state files (council decisions, reflection log, run timestamps)
-2. Hit Alpaca paper API for stock-bot account / positions / orders snapshot
-3. Hit Kalshi REST API for kalshi-bot balance + recent trades + selectivity state (if creds provisioned)
-4. Synthesize 5-line brief
-5. Send to Jarvis Telegram (env vars TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID)
+**What each fire does (v0.1):**
+1. Hit Alpaca paper API for stock-bot account / positions / orders snapshot
+2. Hit Kalshi REST API for kalshi-bot balance + recent trades (if creds provisioned)
+3. Synthesize 5-line brief
+4. Send to Jarvis Telegram (env vars TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID)
+
+v0.2 will add: stock-bot-agent state file reading (council decisions, reflection log) once auth is wired for private-repo access.
 
 **Scope:**
 - READ ONLY — never sends orders, never writes state
