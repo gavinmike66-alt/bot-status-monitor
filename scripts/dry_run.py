@@ -13,12 +13,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from lib.alpaca_summary import get_stock_bot_summary
+from lib.anomalies import detect_pages, detect_proposed_actions
 from lib.kalshi_summary import get_kalshi_summary
 from lib.notify import send_jarvis
 
 
 def synthesize_brief(alpaca: dict, kalshi: dict) -> str:
-    """Format the 5-line brief."""
+    """Format the brief with status + heads-up + proposed actions + pages."""
     fire_time = datetime.now().strftime("%H:%M ET")
     lines = [f"🤖 Bot Status — {fire_time}"]
 
@@ -47,18 +48,32 @@ def synthesize_brief(alpaca: dict, kalshi: dict) -> str:
         age_str = f"{age:.1f}h ago" if age is not None else "no recent fills"
         lines.append(f"Kalshi: ${bal:.2f} • Last fill {age_str} • Fills 24h: {n_fills}")
 
-    # Heads-up line
+    # Heads-up line (small flags, not action items)
     flags = []
     if "error" not in alpaca:
         for p in alpaca.get("positions", []):
-            if p["unrealized_plpc"] < -0.05:
+            if -0.08 < p["unrealized_plpc"] < -0.05:
                 flags.append(f"⚠ {p['symbol']} {p['unrealized_plpc']*100:.1f}%")
-    if "last_fill_age_hours" in kalshi and kalshi["last_fill_age_hours"]:
-        if kalshi["last_fill_age_hours"] > 12:
+    if "last_fill_age_hours" in kalshi and kalshi.get("last_fill_age_hours"):
+        if 12 < kalshi["last_fill_age_hours"] <= 24:
             flags.append(f"⚠ Kalshi silent {kalshi['last_fill_age_hours']:.0f}h")
-
     if flags:
         lines.append("Heads-up: " + " • ".join(flags))
+
+    # Tier D pages (real-money emergencies)
+    pages = detect_pages(alpaca, kalshi)
+    if pages:
+        lines.append("")
+        for p in pages:
+            lines.append(p)
+
+    # Tier B proposed actions
+    actions = detect_proposed_actions(alpaca, kalshi)
+    if actions:
+        lines.append("")
+        lines.append("📋 Proposed actions (reply 'go' to authorize):")
+        for a in actions:
+            lines.append(a)
 
     return "\n".join(lines)
 
