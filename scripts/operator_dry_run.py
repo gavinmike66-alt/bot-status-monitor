@@ -13,6 +13,7 @@ Difference from dry_run.py:
 import sys
 from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -24,7 +25,7 @@ from lib.notify import send_jarvis
 
 
 def synthesize_operator_brief(alpaca: dict, kalshi: dict, pending: list, fresh_pages: list) -> str:
-    fire_time = datetime.now().strftime("%H:%M ET")
+    fire_time = datetime.now(ZoneInfo("America/New_York")).strftime("%H:%M ET")
     lines = [f"🤖 Operator — {fire_time}"]
 
     # Stock-bot status
