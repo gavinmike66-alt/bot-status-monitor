@@ -19,13 +19,17 @@ STOCK_BOT_POSITION_DRAWDOWN_PROPOSE = -0.08 # Tier B: propose stop tightening
 STOCK_BOT_DAILY_DRAWDOWN_PAGE = -0.05       # Tier D: page Mike (5% daily drawdown from peak)
 
 
-def detect_proposed_actions(alpaca: dict, kalshi: dict) -> List[str]:
-    """Return list of formatted proposed-action lines for the brief.
+def detect_proposed_actions(alpaca: dict, kalshi: dict) -> List[Tuple[str, str, str]]:
+    """Return list of (text, tier, cite) tuples for proposed actions.
 
-    Each line is short, actionable, and includes the rule cited.
+    text: formatted action line for the brief
+    tier: "A" | "B" | "C" — explicit, no substring guessing downstream
+    cite: rule reference (e.g. "spec_operator_authority_bounds.md §Tier B")
+
     Mike can ack proposed actions via Jarvis reply (handled by future extension).
     """
     actions = []
+    cite_b = "spec_operator_authority_bounds.md §Tier B"
 
     # --- Stock-bot ---
     if "error" not in alpaca:
@@ -36,30 +40,33 @@ def detect_proposed_actions(alpaca: dict, kalshi: dict) -> List[str]:
         now_utc = datetime.now(timezone.utc)
         is_market_hours = 13 <= now_utc.hour <= 21  # rough US market hours UTC
         if alpaca.get("orders_today", 0) == 0 and is_market_hours:
-            actions.append(
+            actions.append((
                 "→ Stock-bot 0 orders today during market hours. "
-                "If pattern persists 3+ days, propose: review selectivity gate (Tier B). "
-                "Cite: spec_operator_authority_bounds.md §Tier B + Wed transcript flag."
-            )
+                "If pattern persists 3+ days, propose: review selectivity gate (Tier B).",
+                "B",
+                f"{cite_b} + Wed transcript flag",
+            ))
 
         # Position drawdown deep enough to propose stop tightening
         for p in alpaca.get("positions", []):
             if p["unrealized_plpc"] < STOCK_BOT_POSITION_DRAWDOWN_PROPOSE:
-                actions.append(
+                actions.append((
                     f"→ {p['symbol']} at {p['unrealized_plpc']*100:.1f}% unrealized. "
-                    f"Propose: review stop placement (Tier B). "
-                    f"Cite: spec_operator_authority_bounds.md §Tier B."
-                )
+                    f"Propose: review stop placement (Tier B).",
+                    "B",
+                    cite_b,
+                ))
 
     # --- Kalshi ---
     if "error" not in kalshi and "note" not in kalshi:
         age = kalshi.get("last_fill_age_hours")
         if age is not None and age > KALSHI_SILENT_HOURS_PROPOSE:
-            actions.append(
+            actions.append((
                 f"→ Kalshi silent {age:.0f}h. "
-                f"Propose: check selectivity gate, verify bot health, consider asset rotation (Tier B). "
-                f"Cite: spec_operator_authority_bounds.md §Tier B + project_kalshi_live_universe_may2.md."
-            )
+                f"Propose: check selectivity gate, verify bot health, consider asset rotation (Tier B).",
+                "B",
+                f"{cite_b} + project_kalshi_live_universe_may2.md",
+            ))
 
         # Per-asset WR demotion check would go here once Kalshi creds + per-asset stats are wired.
         # v0.2 candidate.

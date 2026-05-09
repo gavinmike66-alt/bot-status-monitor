@@ -73,8 +73,8 @@ def synthesize_brief(alpaca: dict, kalshi: dict) -> str:
     if actions:
         lines.append("")
         lines.append("📋 Proposed actions (reply 'go' to authorize):")
-        for a in actions:
-            lines.append(a)
+        for action_text, tier, _cite in actions:
+            lines.append(f"[Tier {tier}] {action_text}")
 
     return "\n".join(lines)
 

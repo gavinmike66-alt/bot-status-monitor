@@ -25,7 +25,7 @@ If anything in this routine prompt conflicts with those files, the canonical fil
    - `get_kalshi_summary()` (Kalshi REST when creds provisioned)
 
 2. **Run anomaly detection** via `lib.anomalies`:
-   - `detect_proposed_actions(alpaca, kalshi)` → list of Tier B proposed-action strings
+   - `detect_proposed_actions(alpaca, kalshi)` → list of `(text, tier, cite)` tuples; tier ∈ {"A","B","C"} explicit (no substring guessing)
    - `detect_pages(alpaca, kalshi)` → list of Tier D page-mike strings
 
 3. **Persist proposed actions to state/pending_actions.jsonl** (append-only):

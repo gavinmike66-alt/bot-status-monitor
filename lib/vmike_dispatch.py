@@ -25,6 +25,8 @@ except ImportError:
 ABOUT_ME_PATH = Path(__file__).resolve().parent.parent / "about_me.md"
 MODEL = "claude-opus-4-7"
 MAX_TOKENS = 1500  # ~500-1000 words target
+TELEGRAM_HARD_LIMIT = 4096  # Telegram message char cap
+VMIKE_BRIEF_BUDGET = 3000   # leave ~1000 chars for the surrounding Operator brief
 
 
 def dispatch_to_vmike(anomalies: list, pages: list, alpaca: dict, kalshi: dict) -> str:
@@ -53,7 +55,12 @@ def dispatch_to_vmike(anomalies: list, pages: list, alpaca: dict, kalshi: dict) 
     user_lines = ["Operator detected the following anomalies during this fire. Apply your voice/judgment rules from system prompt — verify, recommend, cite. Output ONE concise brief (<300 words). Format:"]
     user_lines.append("**Anomalies:**")
     for a in anomalies:
-        user_lines.append(f"- {a}")
+        # anomalies can be either tuples (text, tier, cite) from detect_proposed_actions, or plain strings
+        if isinstance(a, tuple):
+            text, tier, cite = a
+            user_lines.append(f"- [Tier {tier}] {text} (cite: {cite})")
+        else:
+            user_lines.append(f"- {a}")
     if pages:
         user_lines.append("\n**Tier D pages:**")
         for p in pages:
@@ -88,6 +95,8 @@ def dispatch_to_vmike(anomalies: list, pages: list, alpaca: dict, kalshi: dict) 
         )
         text_blocks = [b.text for b in response.content if hasattr(b, "text")]
         analysis = "\n".join(text_blocks).strip()
+        if len(analysis) > VMIKE_BRIEF_BUDGET:
+            analysis = analysis[:VMIKE_BRIEF_BUDGET].rstrip() + "\n…[truncated, see full session log]"
         return f"\n\n📊 **vMike analysis:**\n{analysis}"
     except Exception as e:
         return f"\n⚠ vMike dispatch failed: {e}\nAnomalies still surfaced above; investigate manually."

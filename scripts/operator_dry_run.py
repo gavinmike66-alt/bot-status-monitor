@@ -91,18 +91,11 @@ def main() -> int:
     pages = detect_pages(alpaca, kalshi)
 
     new_count = 0
-    for action_text in proposed_actions:
-        # action_text from anomalies.py is already a formatted line; pull tier from it heuristically
-        tier = "B"
-        if "Tier D" in action_text or "🚨" in action_text:
-            tier = "D"
-        rule_cited = ""
-        if "Cite:" in action_text:
-            rule_cited = action_text.split("Cite:", 1)[1].strip()
+    for action_text, tier, rule_cited in proposed_actions:
         entry = add_action(action_text, tier, rule_cited=rule_cited)
         if entry is not None:
             new_count += 1
-            print(f"  + queued {entry['id']}: {action_text[:80]}")
+            print(f"  + queued {entry['id']} [Tier {tier}]: {action_text[:80]}")
 
     print(f"  -> {new_count} new pending actions added to queue\n")
 
