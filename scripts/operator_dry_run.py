@@ -22,6 +22,7 @@ from lib.alpaca_summary import get_stock_bot_summary
 from lib.anomalies import detect_pages, detect_proposed_actions
 from lib.kalshi_summary import get_kalshi_summary
 from lib.notify import send_jarvis
+from lib.vmike_dispatch import dispatch_to_vmike
 
 
 def synthesize_operator_brief(alpaca: dict, kalshi: dict, pending: list, fresh_pages: list) -> str:
@@ -108,7 +109,14 @@ def main() -> int:
     pending = list_pending_resolved()
     print(f"[STATE] {len(pending)} actions pending in queue\n")
 
-    brief = synthesize_operator_brief(alpaca, kalshi, pending, pages)
+    print("[4/4] Dispatching anomalies to vMike for analysis (if any)...")
+    vmike_brief = dispatch_to_vmike(proposed_actions, pages, alpaca, kalshi)
+    if vmike_brief.strip():
+        print(f"  -> vMike returned {len(vmike_brief)} chars\n")
+    else:
+        print("  -> No anomalies, no dispatch\n")
+
+    brief = synthesize_operator_brief(alpaca, kalshi, pending, pages) + vmike_brief
     print("=== BRIEF ===")
     print(brief)
     print("=============\n")
