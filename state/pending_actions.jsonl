@@ -1,2 +1,4 @@
 {"id": "act_88548d", "ts": "2026-05-09T13:41:22.525749+00:00", "tier": "B", "action": "\u2192 Stock-bot 0 orders today during market hours. If pattern persists 3+ days, propose: review selectivity gate (Tier B).", "rationale": "", "rule_cited": "spec_operator_authority_bounds.md \u00a7Tier B + Wed transcript flag", "status": "pending"}
 {"id": "act_d692ed", "ts": "2026-05-16T21:31:58.200198+00:00", "tier": "C", "action": "\u2192 [META_SELF] First-ever operator_v2 run, or heartbeat file missing. Establishing baseline. Subsequent runs will detect staleness.", "rationale": "", "rule_cited": "operator_v2.py \u00a7 meta_self_heartbeat", "status": "pending"}
+{"id": "act_88548d", "ts": "2026-05-16T22:18:13.536672+00:00", "event": "resolution", "resolution": "skipped", "by": "terry-cleanup-2026-05-16"}
+{"id": "act_d692ed", "ts": "2026-05-16T22:18:59.499998+00:00", "event": "resolution", "resolution": "skipped", "by": "terry-cleanup-2026-05-16"}

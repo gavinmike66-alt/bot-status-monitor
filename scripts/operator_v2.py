@@ -193,18 +193,17 @@ def main(argv: list[str]) -> int:
     log.info(f"summaries: alpaca={list(alpaca.keys())} "
              f"kalshi={list(kalshi.keys())} smallcap={list(smallcap.keys())}")
 
-    # --- 2. Run v1 + v2 detection
-    v1_actions = []
+    # --- 2. Run v2 detection (covers kalshi + smallcap)
+    # v1 detection was for retired stock-bot-agent — its zero-orders-today
+    # check fires on the shared Alpaca account but really represents smallcap-bot
+    # idle state, which v2's smallcap adapter handles correctly with weekday-aware
+    # logic + routine-fire freshness. Dropping v1 from the pipeline.
     v2_actions = []
-    try:
-        v1_actions = collect_v1_actions(alpaca, kalshi)
-    except Exception:
-        log.error(f"v1 detection failed:\n{traceback.format_exc()}")
     try:
         v2_actions = collect_v2_actions(Path(args.kalshi_dir), smallcap_summary=smallcap)
     except Exception:
         log.error(f"v2 detection failed:\n{traceback.format_exc()}")
-    log.info(f"detected v1={len(v1_actions)} v2={len(v2_actions)} actions")
+    log.info(f"detected v2={len(v2_actions)} actions (v1 dropped — retired bot)")
 
     # --- 3. META self-heartbeat check (BEFORE writing new heartbeat)
     meta_self = check_meta_heartbeat()
@@ -212,7 +211,7 @@ def main(argv: list[str]) -> int:
         v2_actions.insert(0, meta_self)
         log.info(f"meta-self check: {meta_self[0][:80]}")
 
-    all_actions = v1_actions + v2_actions
+    all_actions = v2_actions
 
     # --- 4. Pages (Tier D, immediate)
     fresh_pages = []
@@ -236,7 +235,7 @@ def main(argv: list[str]) -> int:
     vmike_brief = ""
     if all_actions or fresh_pages:
         try:
-            vmike_brief = dispatch_to_vmike(all_actions, fresh_pages, alpaca, kalshi)
+            vmike_brief = dispatch_to_vmike(all_actions, fresh_pages, alpaca, kalshi, smallcap=smallcap)
             log.info(f"vmike dispatch: {len(vmike_brief)} chars")
         except Exception:
             log.warning(f"vmike dispatch failed:\n{traceback.format_exc()}")

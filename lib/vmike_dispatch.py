@@ -29,7 +29,7 @@ TELEGRAM_HARD_LIMIT = 4096  # Telegram message char cap
 VMIKE_BRIEF_BUDGET = 3000   # leave ~1000 chars for the surrounding Operator brief
 
 
-def dispatch_to_vmike(anomalies: list, pages: list, alpaca: dict, kalshi: dict) -> str:
+def dispatch_to_vmike(anomalies: list, pages: list, alpaca: dict, kalshi: dict, smallcap: dict | None = None) -> str:
     """Call Claude with vMike's voice/judgment; return analysis brief.
 
     Returns markdown string ready to append to the Telegram brief.
@@ -67,12 +67,34 @@ def dispatch_to_vmike(anomalies: list, pages: list, alpaca: dict, kalshi: dict) 
             user_lines.append(f"- {p}")
 
     user_lines.append("\n**Current bot state at fire time:**")
-    if "error" not in alpaca:
-        user_lines.append(f"Stock-bot: equity ${alpaca.get('equity', 0):,.0f}, {len(alpaca.get('positions', []))} positions, {alpaca.get('open_orders', 0)} open orders, orders_today={alpaca.get('orders_today', 0)}")
+    # Smallcap-bot replaced stock-bot-agent May 12 2026. The Alpaca paper account
+    # is shared (~$106K equity from stock-bot's prior trading), but the active
+    # bot is now smallcap-bot at $3K bankroll scale. Use smallcap summary if
+    # provided; fall back to alpaca summary with relabel.
+    if smallcap and "error" not in smallcap:
+        ver = smallcap.get("bot_version", "")
+        paused = " [PAUSED]" if smallcap.get("paused") else ""
+        user_lines.append(
+            f"smallcap-bot {ver}{paused}: equity ${smallcap.get('equity', 0):,.0f}, "
+            f"{len(smallcap.get('positions', []))} positions, "
+            f"{smallcap.get('alpaca_open_orders_count', 0)} open orders, "
+            f"orders_today={smallcap.get('orders_today', 0)}"
+        )
+        for p in smallcap.get("positions", []):
+            user_lines.append(f"  - {p['symbol']}: qty={p['qty']}, unrealized_plpc={p['unrealized_plpc']*100:+.1f}%")
+        # Routine freshness hints (helps vMike judge if a routine missed)
+        last_pm = smallcap.get("last_run_premarket_h_ago")
+        if last_pm is not None:
+            user_lines.append(f"  routines: premarket {last_pm:.1f}h ago, "
+                              f"midday {smallcap.get('last_run_midday_h_ago', 0) or 0:.1f}h ago, "
+                              f"close {smallcap.get('last_run_close_h_ago', 0) or 0:.1f}h ago")
+    elif "error" not in alpaca:
+        # Fallback when smallcap summary not passed (back-compat)
+        user_lines.append(f"smallcap-bot: equity ${alpaca.get('equity', 0):,.0f}, {len(alpaca.get('positions', []))} positions, {alpaca.get('open_orders', 0)} open orders, orders_today={alpaca.get('orders_today', 0)}")
         for p in alpaca.get("positions", []):
             user_lines.append(f"  - {p['symbol']}: qty={p['qty']}, unrealized_plpc={p['unrealized_plpc']*100:+.1f}%")
     else:
-        user_lines.append(f"Stock-bot: ⚠ {alpaca['error']}")
+        user_lines.append(f"smallcap-bot: ⚠ {alpaca.get('error', 'no data')}")
 
     if "note" in kalshi:
         user_lines.append(f"Kalshi: {kalshi['note']}")
