@@ -4,3 +4,4 @@
 {"id": "act_d692ed", "ts": "2026-05-16T22:18:59.499998+00:00", "event": "resolution", "resolution": "skipped", "by": "terry-cleanup-2026-05-16"}
 {"id": "act_synth1", "ts": "2026-05-13T14:29:10.295819+00:00", "tier": "B", "action": "SYNTHETIC TEST: 80h-old stale action \u2014 should auto-expire", "rationale": "", "rule_cited": "test", "status": "pending"}
 {"id": "act_synth1", "ts": "2026-05-16T22:29:10.338706+00:00", "event": "resolution", "resolution": "expired", "by": "auto-expiry"}
+{"id": "act_ad57df", "ts": "2026-05-16T22:35:09.186386+00:00", "tier": "B", "action": "\u2192 [smallcap/ROUTINE_FIRE_MISSED] smallcap-bot post_open routine has NEVER fired (no last_run_post_open.txt). Expected last fire at Fri 09:35 ET. Check cron + venv + smallcap-bot daemon.", "rationale": "", "rule_cited": "anomalies_v2.py \u00a7 detection (May-16 META-extension)", "status": "pending"}

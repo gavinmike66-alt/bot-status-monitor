@@ -51,40 +51,84 @@ class BotExpectation:
     paper_promotion_rules: dict[str, Any]  # global rules: e.g. min WR, min n
 
 
-def kalshi_expected_state() -> BotExpectation:
-    """Hardcoded for now; will move to ~/kalshi-bot/expected_state.json in v1.5."""
-    ny = timezone(timedelta(hours=-4))
-    today_iso = datetime(2026, 5, 16, 16, 50, tzinfo=ny).isoformat()  # launch time
+def _load_expected_state(bot_dir: Path) -> dict | None:
+    """Load expected_state.json from a bot's repo directory.
+
+    Returns the parsed dict, or None if the file doesn't exist or fails to
+    parse. v0.10 — moved from hardcoded BotExpectation to data file so
+    threshold tweaks don't require code changes.
+    """
+    path = bot_dir / "expected_state.json"
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def kalshi_expected_state(bot_dir: Path = Path("/Users/terry/kalshi-bot")) -> BotExpectation:
+    """Load kalshi-bot expected state from JSON file with code-default fallback.
+
+    v0.10 (May-16): data-file-first. If file missing or malformed, fall back
+    to the previous hardcoded defaults (defense-in-depth — META layer keeps
+    working if the JSON file gets corrupted).
+    """
+    cfg = _load_expected_state(bot_dir)
+    if cfg is None:
+        # Hardcoded defaults — used only if JSON file missing/malformed
+        ny = timezone(timedelta(hours=-4))
+        today_iso = datetime(2026, 5, 16, 16, 50, tzinfo=ny).isoformat()
+        return BotExpectation(
+            bot_name="kalshi-bot",
+            assets=[
+                AssetExpectation("15m-DOGE", enabled=True, min_trades_per_7d=5, promoted_at=today_iso),
+                AssetExpectation("15m-HYPE", enabled=True, min_trades_per_7d=5, promoted_at=today_iso),
+                AssetExpectation("15m-XRP",  enabled=True, min_trades_per_7d=5, promoted_at=today_iso),
+                AssetExpectation("15m-BTC",  enabled=True, min_trades_per_7d=5, promoted_at=today_iso),
+                AssetExpectation("15m-ETH",  enabled=True, min_trades_per_7d=5, promoted_at=today_iso),
+                AssetExpectation("15m-BNB",  enabled=False),
+                AssetExpectation("15m-SOL",  enabled=False),
+                AssetExpectation("hourly-BTC", enabled=True, min_trades_per_7d=20),
+                AssetExpectation("hourly-ETH", enabled=True, min_trades_per_7d=10),
+                AssetExpectation("hourly-XRP", enabled=True, min_trades_per_7d=0),
+                AssetExpectation("hourly-DOGE",enabled=True, min_trades_per_7d=0),
+                AssetExpectation("hourly-BNB", enabled=False),
+                AssetExpectation("hourly-SOL", enabled=False),
+            ],
+            touch_files={"PAUSED": 24, "TRIPWIRE_BASELINE_TS": 0},
+            realized_pnl_anchor="peak",
+            paper_promotion_rules={"min_wr": 0.70, "min_n": 15, "min_days": 5, "min_ev_per_trade": 0.0},
+        )
+
+    # Parse from JSON
+    assets = []
+    for a in cfg.get("assets", []):
+        assets.append(AssetExpectation(
+            name=a["name"],
+            enabled=a.get("enabled", False),
+            min_trades_per_7d=a.get("min_trades_per_7d", 0),
+            grace_period_hours=a.get("grace_period_hours", 48),
+            promoted_at=a.get("promoted_at"),
+            paper_period_start_iso=a.get("paper_period_start_iso"),
+        ))
+
+    # touch_files can be either {filename: hours} or {filename: {"max_age_hours": N}}
+    touch_files: dict[str, int] = {}
+    for fname, val in cfg.get("touch_files", {}).items():
+        if isinstance(val, dict):
+            touch_files[fname] = val.get("max_age_hours", 0)
+        else:
+            touch_files[fname] = val
+
     return BotExpectation(
-        bot_name="kalshi-bot",
-        assets=[
-            # 15m universe (post May 16 launch)
-            AssetExpectation("15m-DOGE", enabled=True, min_trades_per_7d=5, promoted_at=today_iso),
-            AssetExpectation("15m-HYPE", enabled=True, min_trades_per_7d=5, promoted_at=today_iso),
-            AssetExpectation("15m-XRP",  enabled=True, min_trades_per_7d=5, promoted_at=today_iso),
-            AssetExpectation("15m-BTC",  enabled=True, min_trades_per_7d=5, promoted_at=today_iso),
-            AssetExpectation("15m-ETH",  enabled=True, min_trades_per_7d=5, promoted_at=today_iso),
-            AssetExpectation("15m-BNB",  enabled=False),  # paper-locked
-            AssetExpectation("15m-SOL",  enabled=False),
-            # Hourly
-            AssetExpectation("hourly-BTC", enabled=True, min_trades_per_7d=20),
-            AssetExpectation("hourly-ETH", enabled=True, min_trades_per_7d=10),
-            AssetExpectation("hourly-XRP", enabled=True, min_trades_per_7d=0),  # liquidity-limited
-            AssetExpectation("hourly-DOGE",enabled=True, min_trades_per_7d=0),  # liquidity-limited
-            AssetExpectation("hourly-BNB", enabled=False),
-            AssetExpectation("hourly-SOL", enabled=False),
-        ],
-        touch_files={
-            "PAUSED": 24,                  # if PAUSED touch-file >24h old, propose lift
-            "TRIPWIRE_BASELINE_TS": 0,     # no TTL — anchor file
-        },
-        realized_pnl_anchor="peak",
-        paper_promotion_rules={
-            "min_wr": 0.70,
-            "min_n": 15,
-            "min_days": 5,
-            "min_ev_per_trade": 0.0,
-        },
+        bot_name=cfg.get("bot_name", "kalshi-bot"),
+        assets=assets,
+        touch_files=touch_files,
+        realized_pnl_anchor=cfg.get("realized_pnl_anchor", "peak"),
+        paper_promotion_rules=cfg.get("paper_promotion_rules", {
+            "min_wr": 0.70, "min_n": 15, "min_days": 5, "min_ev_per_trade": 0.0
+        }),
     )
 
 
@@ -311,18 +355,42 @@ def _last_expected_weekday_fire(routine_hour_et: int, routine_min_et: int = 0) -
         d = d - timedelta(days=1)
 
 
-def detect_smallcap_anomalies(summary: dict) -> list[dict]:
+def smallcap_expected_state(bot_dir: Path = Path("/Users/terry/smallcap-bot-agent")) -> dict:
+    """Load smallcap-bot expected_state.json with code-default fallback.
+
+    v0.10: data-driven thresholds. JSON file at bot_dir/expected_state.json
+    is the source of truth; falls back to safe defaults if missing.
+    """
+    cfg = _load_expected_state(bot_dir) or {}
+    # Defaults — used as base, overridden by JSON if present
+    return {
+        "routines": cfg.get("routines", [
+            {"name": "premarket", "hour_et": 8,  "minute_et": 30, "grace_hours_after_fire": 1.5},
+            {"name": "post_open", "hour_et": 9,  "minute_et": 35, "grace_hours_after_fire": 1.0},
+            {"name": "midday",    "hour_et": 12, "minute_et": 0,  "grace_hours_after_fire": 1.0},
+            {"name": "close",     "hour_et": 15, "minute_et": 45, "grace_hours_after_fire": 1.0},
+        ]),
+        "touch_files": cfg.get("touch_files", {"PAUSED": {"max_age_hours": 24}}),
+        "cost_basis_drift_usd": cfg.get("thresholds", {}).get("cost_basis_drift_usd", 0.01),
+        "manual_intervention_recent_hours": cfg.get("thresholds", {}).get("manual_intervention_recent_hours", 24),
+    }
+
+
+def detect_smallcap_anomalies(summary: dict, expected: dict | None = None) -> list[dict]:
     """Smallcap-bot-specific anomaly detection.
 
     Operates on the dict returned by smallcap_summary.get_smallcap_bot_summary().
-    Three classes for MVP:
-      1. ROUTINE_FIRE_MISSED: weekday-aware check (premarket/midday/close)
-      2. POSITION_WITHOUT_STOP: Alpaca has positions but no sell-stop orders
-         (the May-13 QUBT/OTO incident class)
-      3. PAUSED_STALE: kill-switch touch file older than 24h
+    Thresholds come from expected_state.json (per-bot data-driven config).
 
-    Returns list of finding dicts in the same shape as detect_behavior_anomalies.
+    Classes:
+      1. ROUTINE_FIRE_MISSED: weekday-aware check per routine in expected.routines
+      2. POSITION_WITHOUT_STOP: May-13 QUBT/OTO incident class
+      3. COST_BASIS_DRIFT: state.entry_price ≠ Alpaca avg_entry_price > threshold
+      4. CONFIG_DRIFT: touch-file older than per-file TTL
+      5. MANUAL_INTERVENTION_RECENT: human edited the log within recent window
     """
+    if expected is None:
+        expected = smallcap_expected_state()
     findings: list[dict] = []
     ny = timezone(timedelta(hours=-4))
     now = datetime.now(ny)
@@ -338,15 +406,13 @@ def detect_smallcap_anomalies(summary: dict) -> list[dict]:
         })
         return findings
 
-    # --- 1. Routine fire missed (premarket, midday, close)
-    # Premarket fires at 8:30 ET; alert if it didn't fire by 10:00 ET on the
-    # current/most-recent weekday.
-    routines = [
-        ("premarket", 8, 30, "last_run_premarket_h_ago", 1.5),  # 1.5h grace after fire
-        ("midday",    12, 0, "last_run_midday_h_ago", 1.0),
-        ("close",     15, 45, "last_run_close_h_ago", 1.0),
-    ]
-    for name, hh, mm, age_key, grace_hours in routines:
+    # --- 1. Routine fire missed (data-driven from expected.routines)
+    for r in expected.get("routines", []):
+        name = r["name"]
+        hh = r["hour_et"]
+        mm = r.get("minute_et", 0)
+        grace_hours = r.get("grace_hours_after_fire", 1.0)
+        age_key = f"last_run_{name}_h_ago"
         last_expected = _last_expected_weekday_fire(hh, mm)
         # Compute expected_age = how many hours ago the fire should have happened
         expected_age = (now - last_expected).total_seconds() / 3600
@@ -420,7 +486,8 @@ def detect_smallcap_anomalies(summary: dict) -> list[dict]:
         if alpaca_entry <= 0 or bot_entry <= 0:
             continue
         drift = abs(alpaca_entry - bot_entry)
-        if drift > 0.01:
+        drift_threshold = expected.get("cost_basis_drift_usd", 0.01)
+        if drift > drift_threshold:
             findings.append({
                 "class": "COST_BASIS_DRIFT",
                 "symbol": symbol,
@@ -441,14 +508,18 @@ def detect_smallcap_anomalies(summary: dict) -> list[dict]:
     # --- 3. PAUSED stale (kill switch outlived its trigger condition)
     if summary.get("paused"):
         paused_age = summary.get("paused_age_hours", 0) or 0
-        if paused_age > 24:
+        # touch_files config may be {filename: hours} or {filename: {max_age_hours: N}}
+        paused_cfg = expected.get("touch_files", {}).get("PAUSED", 24)
+        paused_ttl = paused_cfg.get("max_age_hours", 24) if isinstance(paused_cfg, dict) else paused_cfg
+        if paused_age > paused_ttl:
             findings.append({
                 "class": "CONFIG_DRIFT",
                 "file": "PAUSED",
                 "age_hours": round(paused_age, 1),
+                "ttl_hours": paused_ttl,
                 "severity": "high",
                 "proposed_action": (
-                    f"smallcap-bot PAUSED touch-file is {paused_age:.1f}h old. "
+                    f"smallcap-bot PAUSED touch-file is {paused_age:.1f}h old (TTL {paused_ttl}h). "
                     f"Likely a protective gate that has outlived its trigger. "
                     f"Investigate cause, lift if condition cleared."
                 ),
