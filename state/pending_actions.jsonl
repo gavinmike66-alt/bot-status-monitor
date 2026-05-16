@@ -6,3 +6,5 @@
 {"id": "act_synth1", "ts": "2026-05-16T22:29:10.338706+00:00", "event": "resolution", "resolution": "expired", "by": "auto-expiry"}
 {"id": "act_ad57df", "ts": "2026-05-16T22:35:09.186386+00:00", "tier": "B", "action": "\u2192 [smallcap/ROUTINE_FIRE_MISSED] smallcap-bot post_open routine has NEVER fired (no last_run_post_open.txt). Expected last fire at Fri 09:35 ET. Check cron + venv + smallcap-bot daemon.", "rationale": "", "rule_cited": "anomalies_v2.py \u00a7 detection (May-16 META-extension)", "status": "pending"}
 {"id": "act_ad57df", "ts": "2026-05-16T22:39:01.447262+00:00", "event": "resolution", "resolution": "skipped", "by": "v0.11-paused-aware-fix-cleanup"}
+{"id": "act_f41291", "ts": "2026-05-16T22:43:34.682581+00:00", "tier": "B", "action": "[smallcap/TEST] auto-log integration test action", "rationale": "", "rule_cited": "test", "status": "pending"}
+{"id": "act_f41291", "ts": "2026-05-16T22:43:34.682759+00:00", "event": "resolution", "resolution": "approved", "by": "terry-v0.13-test"}

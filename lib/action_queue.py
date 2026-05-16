@@ -85,6 +85,11 @@ def resolve_action(action_id: str, resolution: str, by: str = "mike") -> bool:
     v0.1 keeps the file append-only — resolutions are events, not in-place edits.
     list_pending() filters out actions that have a later resolution event.
 
+    v0.2 (May-16): if resolution='approved', also auto-write to decision_log.jsonl
+    so the audit trail captures the WHY. Closes the META loop: detection →
+    queue → Mike approves → decision logged automatically. No invasive bot
+    integration needed.
+
     resolution: "approved" / "skipped" / "expired"
     """
     _ensure_state_dir()
@@ -99,6 +104,36 @@ def resolve_action(action_id: str, resolution: str, by: str = "mike") -> bool:
     }
     with open(QUEUE_PATH, "a") as f:
         f.write(json.dumps(event) + "\n")
+
+    # v0.2: Auto-log approved actions to decision_log.
+    # Skipped/expired don't represent state changes — no decision-log entry.
+    if resolution == "approved":
+        try:
+            # Look up the original action text for rationale context
+            from lib.decision_log import log_decision
+            entries = load_queue()
+            original = next((e for e in entries if e.get("id") == action_id and e.get("event") != "resolution"), None)
+            if original:
+                action_text = original.get("action", "")
+                tier = original.get("tier", "?")
+                cite = original.get("rule_cited", "")
+                # Try to infer bot from action_text (e.g. "[kalshi/...]" or "[smallcap/...]")
+                bot = "cross-bot"
+                if "[kalshi/" in action_text or "kalshi" in action_text.lower():
+                    bot = "kalshi-bot"
+                elif "[smallcap/" in action_text or "smallcap" in action_text.lower():
+                    bot = "smallcap-bot-agent"
+                log_decision(
+                    bot=bot,
+                    kind="action_approved",
+                    rationale=action_text[:300],
+                    evidence=f"action_id={action_id}, tier={tier}, cite={cite}",
+                    by=by,
+                )
+        except Exception:
+            # Never let decision-log failures break the resolution itself —
+            # the queue update is the authoritative event.
+            pass
     return True
 
 
