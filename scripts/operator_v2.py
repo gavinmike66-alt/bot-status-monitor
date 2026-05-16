@@ -166,7 +166,19 @@ def main(argv: list[str]) -> int:
 
     log.info("=== operator_v2 fire ===")
 
-    from lib.action_queue import add_action, list_pending_resolved
+    from lib.action_queue import add_action, auto_expire_stale, list_pending_resolved
+
+    # --- 0. Auto-expire stale pending actions (>72h old).
+    # Closes the May-9 act_88548d failure mode: detection without resolution
+    # leaves the queue growing forever. Run before detection so the brief
+    # shows accurate pending count.
+    try:
+        expired = auto_expire_stale(max_age_hours=72.0)
+        if expired:
+            log.info(f"auto-expired {len(expired)} stale actions: " +
+                     ", ".join(f"{e['id']}({e['age_hours']}h)" for e in expired))
+    except Exception:
+        log.warning(f"auto-expire failed:\n{traceback.format_exc()}")
     from lib.alpaca_summary import get_stock_bot_summary
     from lib.anomalies import detect_pages
     from lib.kalshi_summary import get_kalshi_summary

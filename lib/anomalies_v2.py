@@ -401,6 +401,43 @@ def detect_smallcap_anomalies(summary: dict) -> list[dict]:
                 ),
             })
 
+    # --- 2b. Cost-basis drift (May-13 OTO root cause — load-bearing)
+    # If state's entry_price diverges from Alpaca's avg_entry_price by >$0.01,
+    # all downstream math is wrong (stops, rungs, time stop). The smallcap-bot's
+    # midday/close routines now sync via update_entry_price (commit 75fc065),
+    # but if post_open fails and midday/close haven't fired yet, drift sits
+    # un-detected. This check catches the window in between routines.
+    bot_positions = summary.get("bot_positions", {}) or {}
+    for p in positions:
+        symbol = p.get("symbol")
+        if not symbol or symbol not in bot_positions:
+            continue
+        try:
+            alpaca_entry = float(p.get("avg_entry_price", 0))
+            bot_entry = float(bot_positions[symbol].get("entry_price", 0))
+        except (TypeError, ValueError):
+            continue
+        if alpaca_entry <= 0 or bot_entry <= 0:
+            continue
+        drift = abs(alpaca_entry - bot_entry)
+        if drift > 0.01:
+            findings.append({
+                "class": "COST_BASIS_DRIFT",
+                "symbol": symbol,
+                "alpaca_entry": alpaca_entry,
+                "bot_entry": bot_entry,
+                "drift_usd": round(drift, 4),
+                "severity": "high",
+                "proposed_action": (
+                    f"smallcap-bot {symbol}: state.entry_price=${bot_entry:.4f} "
+                    f"diverges from Alpaca avg_entry_price=${alpaca_entry:.4f} "
+                    f"by ${drift:.4f}. All downstream math (stops, rungs, time "
+                    f"stop) is computed off the wrong anchor. This is the "
+                    f"May-13 OTO root cause. Force routine sync via "
+                    f"lib/state.update_entry_price() or restart post_open.py."
+                ),
+            })
+
     # --- 3. PAUSED stale (kill switch outlived its trigger condition)
     if summary.get("paused"):
         paused_age = summary.get("paused_age_hours", 0) or 0

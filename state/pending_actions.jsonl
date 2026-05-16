@@ -2,3 +2,5 @@
 {"id": "act_d692ed", "ts": "2026-05-16T21:31:58.200198+00:00", "tier": "C", "action": "\u2192 [META_SELF] First-ever operator_v2 run, or heartbeat file missing. Establishing baseline. Subsequent runs will detect staleness.", "rationale": "", "rule_cited": "operator_v2.py \u00a7 meta_self_heartbeat", "status": "pending"}
 {"id": "act_88548d", "ts": "2026-05-16T22:18:13.536672+00:00", "event": "resolution", "resolution": "skipped", "by": "terry-cleanup-2026-05-16"}
 {"id": "act_d692ed", "ts": "2026-05-16T22:18:59.499998+00:00", "event": "resolution", "resolution": "skipped", "by": "terry-cleanup-2026-05-16"}
+{"id": "act_synth1", "ts": "2026-05-13T14:29:10.295819+00:00", "tier": "B", "action": "SYNTHETIC TEST: 80h-old stale action \u2014 should auto-expire", "rationale": "", "rule_cited": "test", "status": "pending"}
+{"id": "act_synth1", "ts": "2026-05-16T22:29:10.338706+00:00", "event": "resolution", "resolution": "expired", "by": "auto-expiry"}

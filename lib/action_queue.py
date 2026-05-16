@@ -102,6 +102,33 @@ def resolve_action(action_id: str, resolution: str, by: str = "mike") -> bool:
     return True
 
 
+def auto_expire_stale(max_age_hours: float = 72.0) -> List[dict]:
+    """Auto-resolve pending actions older than max_age_hours as 'expired'.
+
+    The May 16 cleanup found two stale entries (act_88548d at 7 days, baseline
+    from May 9) that had to be hand-skipped. The system should do this itself.
+
+    Operator_v2 calls this at the start of each fire so the queue stays fresh.
+    Returns the list of entries that were expired (for logging).
+    """
+    pending = list_pending_resolved()
+    now = datetime.now(timezone.utc)
+    expired = []
+    for entry in pending:
+        try:
+            ts = datetime.fromisoformat(entry["ts"])
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+        except (KeyError, ValueError):
+            continue
+        age_hours = (now - ts).total_seconds() / 3600.0
+        if age_hours > max_age_hours:
+            ok = resolve_action(entry["id"], "expired", by="auto-expiry")
+            if ok:
+                expired.append({**entry, "age_hours": round(age_hours, 1)})
+    return expired
+
+
 def list_pending_resolved() -> List[dict]:
     """Same as list_pending but filters out resolved (approved/skipped/expired) entries.
 
