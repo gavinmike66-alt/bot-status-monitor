@@ -185,6 +185,28 @@ def detect_behavior_anomalies(expected: BotExpectation, trades_csv: Path) -> lis
     return findings
 
 
+def _wilson_lower(wins: int, n: int, z: float = 1.96) -> float:
+    """Wilson score interval lower bound at 95% CI (z=1.96 default).
+
+    More robust than point-estimate w/n on small samples. At n=15 with 12 wins:
+      point estimate: 80.0%
+      Wilson 95% lower: 54.8%
+    Point estimate would flip on one trade; Wilson is stable.
+
+    Args:
+        wins: number of wins
+        n: total trades (must be >0)
+        z: standard normal critical value (1.96 = 95%, 1.645 = 90%)
+    """
+    if n <= 0:
+        return 0.0
+    p = wins / n
+    denom = 1 + (z ** 2) / n
+    center = p + (z ** 2) / (2 * n)
+    spread = z * ((p * (1 - p) / n + (z ** 2) / (4 * n ** 2)) ** 0.5)
+    return (center - spread) / denom
+
+
 def detect_decision_triggers(expected: BotExpectation,
                                paper_trades_csv: Path,
                                actual_paper_status: dict[str, bool]) -> list[dict]:
@@ -238,28 +260,74 @@ def detect_decision_triggers(expected: BotExpectation,
                 except ValueError:
                     pass
 
+    # Gate config — supports both point-estimate (legacy) and Wilson CI lower-bound
+    # for robustness. If wilson_lower_floor is set in rules, use that AS the gate
+    # instead of min_wr point estimate. min_wr stays as a watch-tier threshold.
+    wilson_floor = rules.get("wilson_lower_floor")  # e.g. 0.60 = "Wilson 95% lower bound ≥ 60%"
+
     findings: list[dict] = []
     for asset, s in stats.items():
         if not actual_paper_status.get(asset, False):
             continue  # asset is already live; nothing to propose
         n = s["w"] + s["l"]
-        if n < rules["min_n"]:
-            continue
-        wr = s["w"] / n
+        if n < 5:
+            continue  # too small for any meaningful evaluation
+        wr_point = s["w"] / n
+        wr_wilson = _wilson_lower(s["w"], n)
         ev = s["pnl"] / n
-        if wr >= rules["min_wr"] and ev >= rules["min_ev_per_trade"]:
+        meets_size = n >= rules["min_n"]
+        meets_ev = ev >= rules["min_ev_per_trade"]
+        # Two ways to clear the gate:
+        #   Wilson mode (preferred): wilson_lower ≥ wilson_floor + meets_size + meets_ev
+        #   Point mode (legacy):     wr_point ≥ min_wr + meets_size + meets_ev
+        gate_cleared_wilson = (
+            wilson_floor is not None and wr_wilson >= wilson_floor
+            and meets_size and meets_ev
+        )
+        gate_cleared_point = wr_point >= rules["min_wr"] and meets_size and meets_ev
+
+        if gate_cleared_wilson or gate_cleared_point:
+            gate_via = "Wilson 95% CI" if gate_cleared_wilson else "point estimate"
             findings.append({
                 "class": "DECISION_TRIGGER",
                 "asset": asset,
-                "wr": round(wr * 100, 1),
+                "wr": round(wr_point * 100, 1),
+                "wr_wilson_low": round(wr_wilson * 100, 1),
                 "ev_per_trade": round(ev, 2),
                 "n": n,
+                "gate_via": gate_via,
                 "severity": "medium",
                 "proposed_action": (
                     f"Promote {asset} from paper → live: "
-                    f"{wr*100:.1f}% WR / +${ev:.2f} EV / n={n} clears "
-                    f"the {rules['min_wr']*100:.0f}% WR + positive-EV gate. "
+                    f"{wr_point*100:.1f}% WR (Wilson 95% lower {wr_wilson*100:.1f}%) / "
+                    f"+${ev:.2f} EV / n={n} clears the gate ({gate_via}). "
                     f"Single-asset promotion, never-stack-compliant."
+                ),
+            })
+        elif (wr_point >= rules["min_wr"] and meets_ev) or (n >= rules["min_n"] and wr_wilson >= 0.50):
+            # Watch tier — approaching the gate but not crossed yet
+            # Two paths: (a) WR good but n too small, (b) n good but WR borderline
+            why = []
+            if n < rules["min_n"]:
+                why.append(f"n={n} (need ≥{rules['min_n']})")
+            if wilson_floor is not None and wr_wilson < wilson_floor:
+                why.append(f"Wilson low {wr_wilson*100:.1f}% (need ≥{wilson_floor*100:.0f}%)")
+            elif wr_point < rules["min_wr"]:
+                why.append(f"WR {wr_point*100:.1f}% (need ≥{rules['min_wr']*100:.0f}%)")
+            findings.append({
+                "class": "DECISION_WATCH",
+                "asset": asset,
+                "wr": round(wr_point * 100, 1),
+                "wr_wilson_low": round(wr_wilson * 100, 1),
+                "ev_per_trade": round(ev, 2),
+                "n": n,
+                "blockers": why,
+                "severity": "watch",
+                "proposed_action": (
+                    f"Watch {asset} — approaching paper→live gate: "
+                    f"{wr_point*100:.1f}% WR (Wilson {wr_wilson*100:.1f}%) / "
+                    f"+${ev:.2f} EV / n={n}. Blockers: {', '.join(why)}. "
+                    f"No action proposed yet."
                 ),
             })
     return findings
