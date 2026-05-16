@@ -37,6 +37,7 @@ class AssetExpectation:
     min_trades_per_7d: int = 0     # below this counts as "silent"
     grace_period_hours: int = 48   # ignore silence checks for N hours after promotion
     promoted_at: str | None = None # ISO timestamp of last promotion (for grace calc)
+    paper_period_start_iso: str | None = None  # override: anchor for paper-perf eval
     paper_promotion_criteria: dict[str, Any] = field(default_factory=dict)
 
 
@@ -146,13 +147,28 @@ def detect_decision_triggers(expected: BotExpectation,
     """Class 2: paper criteria cleared on an asset → propose live promotion.
 
     actual_paper_status: {asset_name: is_currently_paper} from config inspection.
+
+    Cutoff anchoring (robustness, May-16 ETH-miss lesson):
+      Rolling `now - N days` windows are brittle — they slide forward each
+      hour, silently dropping early-window trades. Two fixes:
+      1. Default global cutoff anchored to midnight 5d ago (day-boundary).
+      2. Per-asset paper_period_start_iso override (set when an asset is
+         demoted/promoted to reset its evaluation window cleanly).
     """
     ny = timezone(timedelta(hours=-4))
     now = datetime.now(ny)
     rules = expected.paper_promotion_rules
-    cutoff = now - timedelta(days=rules.get("min_days", 5))
+    # Day-boundary anchor: midnight, min_days ago. Stable across the day.
+    default_cutoff_date = (now - timedelta(days=rules.get("min_days", 5))).date()
+    default_cutoff = datetime.combine(default_cutoff_date, datetime.min.time(), tzinfo=ny)
 
-    # Per-asset paper stats post-cutoff
+    # Per-asset override map (built from expectation list)
+    per_asset_cutoff: dict[str, datetime] = {}
+    for ae in expected.assets:
+        if ae.paper_period_start_iso:
+            per_asset_cutoff[ae.name] = datetime.fromisoformat(ae.paper_period_start_iso)
+
+    # Per-asset paper stats post-cutoff (asset-specific or default)
     stats: dict[str, dict] = {}
     if paper_trades_csv.exists():
         with open(paper_trades_csv) as f:
@@ -163,9 +179,11 @@ def detect_decision_triggers(expected: BotExpectation,
                     continue
                 if ts.tzinfo is None:
                     ts = ts.replace(tzinfo=ny)
-                if ts < cutoff:
-                    continue
                 bot = r.get("bot", "")
+                # Use per-asset cutoff if set, else default
+                this_cutoff = per_asset_cutoff.get(bot, default_cutoff)
+                if ts < this_cutoff:
+                    continue
                 s = stats.setdefault(bot, {"w": 0, "l": 0, "pnl": 0.0})
                 if r.get("result") == "WIN":
                     s["w"] += 1
@@ -270,7 +288,33 @@ def run_kalshi(bot_dir: Path = Path("/Users/terry/kalshi-bot")) -> dict:
     }
 
 
+def detect_proposed_actions_v2(bot_dir: Path = Path("/Users/terry/kalshi-bot")) -> list[tuple[str, str, str]]:
+    """v2 wrapper returning the same tuple shape as v1 anomalies.detect_proposed_actions().
+
+    Returns list of (action_text, tier, rule_cited) tuples ready to plug into
+    operator_dry_run pipeline (add_action + vMike dispatch + Jarvis brief).
+
+    Severity → Tier mapping:
+      high   → "B" (Tier B: Mike-approval-via-go/skip)
+      medium → "B"
+      watch  → "C" (Tier C: informational only, no action queued)
+    """
+    result = run_kalshi(bot_dir)
+    actions: list[tuple[str, str, str]] = []
+    cite_v2 = "anomalies_v2.py § detection (May-16 META-extension)"
+    for finding in result["findings"]:
+        cls = finding["class"]
+        tier = "B" if finding.get("severity") in ("high", "medium") else "C"
+        text = f"→ [{cls}] {finding['proposed_action']}"
+        actions.append((text, tier, cite_v2))
+    return actions
+
+
 if __name__ == "__main__":
     import json as _json
     result = run_kalshi()
     print(_json.dumps(result, indent=2, default=str))
+    print()
+    print("=== TUPLE-SHAPE (for operator_dry_run integration) ===")
+    for text, tier, cite in detect_proposed_actions_v2():
+        print(f"[Tier {tier}] {text}")
