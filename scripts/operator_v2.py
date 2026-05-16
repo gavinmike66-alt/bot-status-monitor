@@ -147,10 +147,13 @@ def collect_v1_actions(alpaca: dict, kalshi: dict) -> list[tuple[str, str, str]]
     return detect_proposed_actions(alpaca, kalshi)
 
 
-def collect_v2_actions(bot_dir: Path) -> list[tuple[str, str, str]]:
-    """v2 detection — local-file inspection, new in May-16 build."""
+def collect_v2_actions(bot_dir: Path, smallcap_summary: dict | None = None) -> list[tuple[str, str, str]]:
+    """v2 detection — local-file inspection, new in May-16 build.
+
+    Now covers kalshi-bot AND smallcap-bot-agent (Phase 4 cross-bot extension).
+    """
     from lib.anomalies_v2 import detect_proposed_actions_v2
-    return detect_proposed_actions_v2(bot_dir)
+    return detect_proposed_actions_v2(bot_dir, smallcap_summary=smallcap_summary)
 
 
 def main(argv: list[str]) -> int:
@@ -168,9 +171,10 @@ def main(argv: list[str]) -> int:
     from lib.anomalies import detect_pages
     from lib.kalshi_summary import get_kalshi_summary
     from lib.notify import send_jarvis
+    from lib.smallcap_summary import get_smallcap_bot_summary
     from lib.vmike_dispatch import dispatch_to_vmike
 
-    # --- 1. Pull bot summaries (v1 inputs)
+    # --- 1. Pull bot summaries (v1 + smallcap inputs)
     try:
         alpaca = get_stock_bot_summary()
     except Exception as e:
@@ -181,7 +185,13 @@ def main(argv: list[str]) -> int:
     except Exception as e:
         log.error(f"kalshi summary failed: {e}")
         kalshi = {"error": f"summary failure: {e}"}
-    log.info(f"summaries: alpaca={list(alpaca.keys())} kalshi={list(kalshi.keys())}")
+    try:
+        smallcap = get_smallcap_bot_summary()
+    except Exception as e:
+        log.error(f"smallcap summary failed: {e}")
+        smallcap = {"error": f"summary failure: {e}"}
+    log.info(f"summaries: alpaca={list(alpaca.keys())} "
+             f"kalshi={list(kalshi.keys())} smallcap={list(smallcap.keys())}")
 
     # --- 2. Run v1 + v2 detection
     v1_actions = []
@@ -191,7 +201,7 @@ def main(argv: list[str]) -> int:
     except Exception:
         log.error(f"v1 detection failed:\n{traceback.format_exc()}")
     try:
-        v2_actions = collect_v2_actions(Path(args.kalshi_dir))
+        v2_actions = collect_v2_actions(Path(args.kalshi_dir), smallcap_summary=smallcap)
     except Exception:
         log.error(f"v2 detection failed:\n{traceback.format_exc()}")
     log.info(f"detected v1={len(v1_actions)} v2={len(v2_actions)} actions")
@@ -236,12 +246,15 @@ def main(argv: list[str]) -> int:
     fire_time = datetime.now(ZoneInfo("America/New_York")).strftime("%H:%M ET")
     lines = [f"🤖 Operator v2 — {fire_time}"]
 
-    if "error" in alpaca:
-        lines.append(f"Stock-bot: ⚠ {alpaca['error']}")
+    # Smallcap-bot (May-16: replaced retired stock-bot adapter)
+    if "error" in smallcap:
+        lines.append(f"smallcap-bot: ⚠ {smallcap['error']}")
     else:
-        eq = alpaca.get("equity", 0)
-        n_pos = len(alpaca.get("positions", []))
-        lines.append(f"Stock-bot: ${eq:,.0f} ({n_pos} pos)")
+        eq = smallcap.get("equity", 0)
+        n_pos = len(smallcap.get("positions", []))
+        ver = smallcap.get("bot_version", "")
+        paused = " [PAUSED]" if smallcap.get("paused") else ""
+        lines.append(f"smallcap-bot {ver}: ${eq:,.0f} ({n_pos} pos){paused}")
 
     if "error" in kalshi:
         lines.append(f"Kalshi: ⚠ {kalshi['error']}")

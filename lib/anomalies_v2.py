@@ -288,25 +288,206 @@ def run_kalshi(bot_dir: Path = Path("/Users/terry/kalshi-bot")) -> dict:
     }
 
 
-def detect_proposed_actions_v2(bot_dir: Path = Path("/Users/terry/kalshi-bot")) -> list[tuple[str, str, str]]:
+# ---------------------------------------------------------------------------
+# Smallcap-bot-agent — cross-bot extension (May-16 Phase 4)
+# ---------------------------------------------------------------------------
+
+def _last_expected_weekday_fire(routine_hour_et: int, routine_min_et: int = 0) -> datetime:
+    """Return the most recent weekday-at-routine-time in the past (ET).
+
+    Used to detect missed routine fires while honoring weekend schedule.
+    On Saturday/Sunday: walks back to Friday's fire. On Monday 11am if
+    bot didn't fire at 8:30: returns Monday 8:30 ET.
+    """
+    ny = timezone(timedelta(hours=-4))
+    now = datetime.now(ny)
+    d = now
+    while True:
+        if d.weekday() < 5:
+            fire = d.replace(hour=routine_hour_et, minute=routine_min_et,
+                              second=0, microsecond=0)
+            if fire < now:
+                return fire
+        d = d - timedelta(days=1)
+
+
+def detect_smallcap_anomalies(summary: dict) -> list[dict]:
+    """Smallcap-bot-specific anomaly detection.
+
+    Operates on the dict returned by smallcap_summary.get_smallcap_bot_summary().
+    Three classes for MVP:
+      1. ROUTINE_FIRE_MISSED: weekday-aware check (premarket/midday/close)
+      2. POSITION_WITHOUT_STOP: Alpaca has positions but no sell-stop orders
+         (the May-13 QUBT/OTO incident class)
+      3. PAUSED_STALE: kill-switch touch file older than 24h
+
+    Returns list of finding dicts in the same shape as detect_behavior_anomalies.
+    """
+    findings: list[dict] = []
+    ny = timezone(timedelta(hours=-4))
+    now = datetime.now(ny)
+
+    if "error" in summary:
+        findings.append({
+            "class": "SMALLCAP_SUMMARY_ERROR",
+            "severity": "high",
+            "proposed_action": (
+                f"smallcap-bot summary failed: {summary['error']}. "
+                f"Investigate Alpaca creds + bot state file accessibility."
+            ),
+        })
+        return findings
+
+    # --- 1. Routine fire missed (premarket, midday, close)
+    # Premarket fires at 8:30 ET; alert if it didn't fire by 10:00 ET on the
+    # current/most-recent weekday.
+    routines = [
+        ("premarket", 8, 30, "last_run_premarket_h_ago", 1.5),  # 1.5h grace after fire
+        ("midday",    12, 0, "last_run_midday_h_ago", 1.0),
+        ("close",     15, 45, "last_run_close_h_ago", 1.0),
+    ]
+    for name, hh, mm, age_key, grace_hours in routines:
+        last_expected = _last_expected_weekday_fire(hh, mm)
+        # Compute expected_age = how many hours ago the fire should have happened
+        expected_age = (now - last_expected).total_seconds() / 3600
+        actual_age = summary.get(age_key)
+        # Only alert if (a) routine has never run OR (b) it was supposed to fire
+        # at least `grace_hours` ago AND state shows it didn't.
+        if expected_age < grace_hours:
+            continue  # too soon to know — give the routine its grace window
+        if actual_age is None:
+            findings.append({
+                "class": "ROUTINE_FIRE_MISSED",
+                "routine": name,
+                "expected_fire": last_expected.isoformat(),
+                "severity": "high",
+                "proposed_action": (
+                    f"smallcap-bot {name} routine has NEVER fired (no "
+                    f"last_run_{name}.txt). Expected last fire at "
+                    f"{last_expected.strftime('%a %H:%M ET')}. "
+                    f"Check cron + venv + smallcap-bot daemon."
+                ),
+            })
+        elif actual_age > expected_age + 1.0:  # > 1h beyond expected fire
+            findings.append({
+                "class": "ROUTINE_FIRE_MISSED",
+                "routine": name,
+                "actual_age_hours": round(actual_age, 1),
+                "expected_age_hours": round(expected_age, 1),
+                "severity": "high",
+                "proposed_action": (
+                    f"smallcap-bot {name} routine missed its last "
+                    f"weekday fire: state is {actual_age:.1f}h old, expected "
+                    f"≤{expected_age:.1f}h. Check cron + venv + daemon."
+                ),
+            })
+
+    # --- 2. Position without stop (May-13 QUBT/OTO class — load-bearing)
+    positions = summary.get("positions", [])
+    open_orders_count = summary.get("alpaca_open_orders_count", 0)
+    if positions and open_orders_count == 0:
+        # Positions exist but ZERO open orders → no stops armed. Critical.
+        for p in positions:
+            findings.append({
+                "class": "POSITION_WITHOUT_STOP",
+                "symbol": p.get("symbol", "?"),
+                "qty": p.get("qty", "?"),
+                "severity": "high",
+                "proposed_action": (
+                    f"smallcap-bot has open {p.get('symbol', '?')} position "
+                    f"({p.get('qty', '?')} sh) with NO open orders armed. "
+                    f"This is the May-13 QUBT/OTO-silent-fail class. "
+                    f"Arm GTC stop immediately or close position."
+                ),
+            })
+
+    # --- 3. PAUSED stale (kill switch outlived its trigger condition)
+    if summary.get("paused"):
+        paused_age = summary.get("paused_age_hours", 0) or 0
+        if paused_age > 24:
+            findings.append({
+                "class": "CONFIG_DRIFT",
+                "file": "PAUSED",
+                "age_hours": round(paused_age, 1),
+                "severity": "high",
+                "proposed_action": (
+                    f"smallcap-bot PAUSED touch-file is {paused_age:.1f}h old. "
+                    f"Likely a protective gate that has outlived its trigger. "
+                    f"Investigate cause, lift if condition cleared."
+                ),
+            })
+
+    # --- 4. Manual intervention recent (FYI tier C — humans touched the bot)
+    if summary.get("manual_intervention_recent"):
+        findings.append({
+            "class": "MANUAL_INTERVENTION_RECENT",
+            "age_hours": round(summary.get("manual_intervention_age_hours", 0), 1),
+            "severity": "medium",
+            "proposed_action": (
+                f"smallcap-bot manual_intervention_log.md was edited "
+                f"{summary.get('manual_intervention_age_hours', 0):.1f}h ago. "
+                f"Surface the entry for context — a human stepped in outside "
+                f"the normal bot cadence."
+            ),
+        })
+
+    return findings
+
+
+def run_smallcap(summary: dict) -> dict:
+    """Smallcap-bot anomaly run — parallel structure to run_kalshi().
+
+    Caller passes in the smallcap_summary dict (avoids re-pulling Alpaca twice).
+    """
+    findings = detect_smallcap_anomalies(summary)
+    return {
+        "bot": "smallcap-bot-agent",
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "findings": findings,
+        "summary": {
+            "total": len(findings),
+            "routine_fire_missed": sum(1 for f in findings if f["class"] == "ROUTINE_FIRE_MISSED"),
+            "position_without_stop": sum(1 for f in findings if f["class"] == "POSITION_WITHOUT_STOP"),
+            "config_drift": sum(1 for f in findings if f["class"] == "CONFIG_DRIFT"),
+            "manual_intervention": sum(1 for f in findings if f["class"] == "MANUAL_INTERVENTION_RECENT"),
+        },
+    }
+
+
+def detect_proposed_actions_v2(bot_dir: Path = Path("/Users/terry/kalshi-bot"),
+                                smallcap_summary: dict | None = None) -> list[tuple[str, str, str]]:
     """v2 wrapper returning the same tuple shape as v1 anomalies.detect_proposed_actions().
 
     Returns list of (action_text, tier, rule_cited) tuples ready to plug into
     operator_dry_run pipeline (add_action + vMike dispatch + Jarvis brief).
+
+    Now covers BOTH kalshi-bot and smallcap-bot-agent (May-16 Phase 4 cross-bot).
 
     Severity → Tier mapping:
       high   → "B" (Tier B: Mike-approval-via-go/skip)
       medium → "B"
       watch  → "C" (Tier C: informational only, no action queued)
     """
-    result = run_kalshi(bot_dir)
     actions: list[tuple[str, str, str]] = []
     cite_v2 = "anomalies_v2.py § detection (May-16 META-extension)"
-    for finding in result["findings"]:
+
+    # Kalshi
+    kalshi_result = run_kalshi(bot_dir)
+    for finding in kalshi_result["findings"]:
         cls = finding["class"]
         tier = "B" if finding.get("severity") in ("high", "medium") else "C"
-        text = f"→ [{cls}] {finding['proposed_action']}"
+        text = f"→ [kalshi/{cls}] {finding['proposed_action']}"
         actions.append((text, tier, cite_v2))
+
+    # Smallcap-bot
+    if smallcap_summary is not None:
+        smallcap_result = run_smallcap(smallcap_summary)
+        for finding in smallcap_result["findings"]:
+            cls = finding["class"]
+            tier = "B" if finding.get("severity") in ("high", "medium") else "C"
+            text = f"→ [smallcap/{cls}] {finding['proposed_action']}"
+            actions.append((text, tier, cite_v2))
+
     return actions
 
 
