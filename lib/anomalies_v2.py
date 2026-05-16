@@ -407,12 +407,17 @@ def detect_smallcap_anomalies(summary: dict, expected: dict | None = None) -> li
         return findings
 
     # --- 1. Routine fire missed (data-driven from expected.routines)
+    # Two-signal check: last_attempt (log file mtime = cron fired) vs
+    # last_run (state file = work completed). If attempt is fresh but run is
+    # stale, the cron fired but the routine exited via PAUSED — not anomaly.
+    # If BOTH are stale past expected_age + grace, cron itself didn't fire — real anomaly.
     for r in expected.get("routines", []):
         name = r["name"]
         hh = r["hour_et"]
         mm = r.get("minute_et", 0)
         grace_hours = r.get("grace_hours_after_fire", 1.0)
         age_key = f"last_run_{name}_h_ago"
+        attempt_key = f"last_attempt_{name}_h_ago"
         last_expected = _last_expected_weekday_fire(hh, mm)
         # Compute expected_age = how many hours ago the fire should have happened
         expected_age = (now - last_expected).total_seconds() / 3600
@@ -421,20 +426,29 @@ def detect_smallcap_anomalies(summary: dict, expected: dict | None = None) -> li
         # at least `grace_hours` ago AND state shows it didn't.
         if expected_age < grace_hours:
             continue  # too soon to know — give the routine its grace window
-        if actual_age is None:
+        actual_age = summary.get(age_key)
+        attempt_age = summary.get(attempt_key)
+        # Two-signal check:
+        #   attempt fresh (cron fired within last expected_age window) → no anomaly,
+        #     even if last_run is stale (PAUSED-aborted is valid silent exit)
+        #   attempt stale OR missing → cron didn't fire → real anomaly
+        attempt_fresh = attempt_age is not None and attempt_age <= expected_age + 1.0
+        if attempt_fresh:
+            continue  # cron fired; if state file stale, bot exited via PAUSED — fine
+        if actual_age is None and attempt_age is None:
             findings.append({
                 "class": "ROUTINE_FIRE_MISSED",
                 "routine": name,
                 "expected_fire": last_expected.isoformat(),
                 "severity": "high",
                 "proposed_action": (
-                    f"smallcap-bot {name} routine has NEVER fired (no "
-                    f"last_run_{name}.txt). Expected last fire at "
+                    f"smallcap-bot {name} routine has NEVER fired (no log file, "
+                    f"no state file). Expected last fire at "
                     f"{last_expected.strftime('%a %H:%M ET')}. "
                     f"Check cron + venv + smallcap-bot daemon."
                 ),
             })
-        elif actual_age > expected_age + 1.0:  # > 1h beyond expected fire
+        elif actual_age is not None and actual_age > expected_age + 1.0:
             findings.append({
                 "class": "ROUTINE_FIRE_MISSED",
                 "routine": name,
@@ -444,7 +458,9 @@ def detect_smallcap_anomalies(summary: dict, expected: dict | None = None) -> li
                 "proposed_action": (
                     f"smallcap-bot {name} routine missed its last "
                     f"weekday fire: state is {actual_age:.1f}h old, expected "
-                    f"≤{expected_age:.1f}h. Check cron + venv + daemon."
+                    f"≤{expected_age:.1f}h, log mtime {attempt_age:.1f}h ago. "
+                    f"Cron may have fired but routine isn't writing state. "
+                    f"Check cron + venv + daemon."
                 ),
             })
 

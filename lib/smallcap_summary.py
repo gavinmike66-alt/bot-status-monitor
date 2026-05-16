@@ -81,12 +81,19 @@ def get_smallcap_bot_summary(bot_dir: Path = SMALLCAP_DIR) -> dict:
     snap = _read_json_safe(bot_dir / "state" / "daily_snapshot.json")
     out["daily_snapshot"] = snap if isinstance(snap, dict) else {}
 
-    # 4. Routine freshness — hours since last fire
+    # 4. Routine freshness — TWO signals per routine
+    #    last_run_*_h_ago: state file modified = routine completed its work
+    #    last_attempt_*_h_ago: log file modified = cron fired the script
+    # The gap matters: post_open.py fires at 9:35 ET but if PAUSED is set
+    # it exits silently before writing the state timestamp. last_attempt
+    # catches "cron triggered" while last_run catches "work completed."
+    # If last_attempt fresh but last_run stale → PAUSED-aborted (not anomaly).
+    # If neither fresh → cron didn't fire (real anomaly).
     state_dir = bot_dir / "state"
-    out["last_run_premarket_h_ago"] = _file_age_hours(state_dir / "last_run_premarket.txt")
-    out["last_run_post_open_h_ago"] = _file_age_hours(state_dir / "last_run_post_open.txt")
-    out["last_run_midday_h_ago"] = _file_age_hours(state_dir / "last_run_midday.txt")
-    out["last_run_close_h_ago"] = _file_age_hours(state_dir / "last_run_close.txt")
+    logs_dir = bot_dir / "logs"
+    for routine in ("premarket", "post_open", "midday", "close"):
+        out[f"last_run_{routine}_h_ago"] = _file_age_hours(state_dir / f"last_run_{routine}.txt")
+        out[f"last_attempt_{routine}_h_ago"] = _file_age_hours(logs_dir / f"{routine}.log")
 
     # 5. PAUSED touch-file (kill switch)
     paused_file = bot_dir / "PAUSED"
