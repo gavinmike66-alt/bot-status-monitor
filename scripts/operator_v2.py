@@ -181,12 +181,15 @@ def main(argv: list[str]) -> int:
         log.warning(f"auto-expire failed:\n{traceback.format_exc()}")
     from lib.alpaca_summary import get_stock_bot_summary
     from lib.anomalies import detect_pages
+    from lib.biotech_summary import get_biotech_summary
+    from lib.cross_stream_artifact import render_artifact, write_artifact
     from lib.kalshi_summary import get_kalshi_summary
     from lib.notify import send_jarvis
+    from lib.pnl_trajectory import kalshi_trajectory, smallcap_trajectory, biotech_trajectory
     from lib.smallcap_summary import get_smallcap_bot_summary
     from lib.vmike_dispatch import dispatch_to_vmike
 
-    # --- 1. Pull bot summaries (v1 + smallcap inputs)
+    # --- 1. Pull bot summaries (kalshi + smallcap + biotech for cross-stream view)
     try:
         alpaca = get_stock_bot_summary()
     except Exception as e:
@@ -202,8 +205,13 @@ def main(argv: list[str]) -> int:
     except Exception as e:
         log.error(f"smallcap summary failed: {e}")
         smallcap = {"error": f"summary failure: {e}"}
-    log.info(f"summaries: alpaca={list(alpaca.keys())} "
-             f"kalshi={list(kalshi.keys())} smallcap={list(smallcap.keys())}")
+    try:
+        biotech = get_biotech_summary()
+    except Exception as e:
+        log.error(f"biotech summary failed: {e}")
+        biotech = {"error": f"summary failure: {e}"}
+    log.info(f"summaries: alpaca={len(alpaca)}k "
+             f"kalshi={len(kalshi)}k smallcap={len(smallcap)}k biotech={len(biotech)}k")
 
     # --- 2. Run v2 detection (covers kalshi + smallcap)
     # v1 detection was for retired stock-bot-agent — its zero-orders-today
@@ -311,7 +319,28 @@ def main(argv: list[str]) -> int:
             log.error(f"telegram send raised: {e}")
             return 1
 
-    # --- 9. Write heartbeat (only after successful run)
+    # --- 9. Write cross-stream view artifact to vault (Mike build directive May-17)
+    # Read-only surfacing layer — vault-tracked, agent-queryable, regenerated each fire.
+    try:
+        k_pnl = kalshi_trajectory(current_balance=kalshi.get("balance"))
+        s_pnl = smallcap_trajectory(current_equity=smallcap.get("equity"))
+        b_pnl = biotech_trajectory()
+        content = render_artifact(
+            kalshi_summary=kalshi,
+            smallcap_summary=smallcap,
+            biotech_summary=biotech,
+            kalshi_pnl=k_pnl,
+            smallcap_pnl=s_pnl,
+            biotech_pnl=b_pnl,
+            actions=all_actions,
+            pending_count=len(pending),
+        )
+        path = write_artifact(content)
+        log.info(f"cross-stream artifact written to {path}")
+    except Exception:
+        log.warning(f"cross-stream artifact failed:\n{traceback.format_exc()}")
+
+    # --- 10. Write heartbeat (only after successful run)
     write_heartbeat()
     log.info(f"heartbeat written to {HEARTBEAT_PATH}")
     log.info("=== operator_v2 done ===")

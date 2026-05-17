@@ -626,6 +626,124 @@ def detect_smallcap_anomalies(summary: dict, expected: dict | None = None) -> li
     return findings
 
 
+# ---------------------------------------------------------------------------
+# Kalshi 50¢-zone DECISION_TRIGGER (May-16 pre-flagged weak entry zone)
+# ---------------------------------------------------------------------------
+
+# v0.4 15m-live launch baseline — only trades after this point count for the
+# 50¢ analysis (the pre-launch sample is a different regime).
+KALSHI_15M_LIVE_LAUNCH_ISO = "2026-05-16T16:52:00-04:00"
+
+# Mike-approved gate: n>=20 filled 15m-live trades before any filter call
+KALSHI_50C_GATE_N = 20
+
+
+def detect_kalshi_50c_zone(bot_dir: Path = Path("/Users/terry/kalshi-bot")) -> list[dict]:
+    """50¢-zone DECISION_TRIGGER for Kalshi 15m live universe.
+
+    Per Airy's May-17 proposal: every 4h, split filled live 15m trades since
+    the v0.4 launch into buckets <0.50¢ entry vs >=0.50¢ entry. At n>=20,
+    surface the split with recommend/skip.
+
+    Reads kalshi-bot/trades.csv. The 'entry_price' column is column 7
+    (0-indexed: col 6) — confirmed against May-16 fill records.
+    """
+    findings: list[dict] = []
+    trades_csv = bot_dir / "trades.csv"
+    if not trades_csv.exists():
+        return findings
+
+    ny = timezone(timedelta(hours=-4))
+    launch = datetime.fromisoformat(KALSHI_15M_LIVE_LAUNCH_ISO)
+
+    # Buckets: sub_50 (entry < 0.50), 50_plus (entry >= 0.50)
+    buckets: dict[str, dict] = {
+        "sub_50":  {"n": 0, "w": 0, "l": 0, "pnl": 0.0},
+        "50_plus": {"n": 0, "w": 0, "l": 0, "pnl": 0.0},
+    }
+
+    with open(trades_csv) as f:
+        for r in csv.DictReader(f):
+            # Filter: live 15m only, post-launch
+            bot = r.get("bot", "")
+            if not bot.startswith("15m-"):
+                continue
+            try:
+                ts = datetime.fromisoformat(r["time"])
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=ny)
+            except (ValueError, KeyError):
+                continue
+            if ts < launch:
+                continue
+            result = r.get("result", "")
+            if result not in ("WIN", "LOSS"):
+                continue  # skip pending / unfilled / errors
+            try:
+                entry = float(r.get("entry_price") or 0)
+                pnl = float(r.get("profit") or 0)
+            except (ValueError, TypeError):
+                continue
+            bkey = "sub_50" if entry < 0.50 else "50_plus"
+            buckets[bkey]["n"] += 1
+            if result == "WIN":
+                buckets[bkey]["w"] += 1
+            else:
+                buckets[bkey]["l"] += 1
+            buckets[bkey]["pnl"] += pnl
+
+    total_n = buckets["sub_50"]["n"] + buckets["50_plus"]["n"]
+
+    if total_n == 0:
+        return findings  # no live 15m trades yet — nothing to surface
+
+    if total_n < KALSHI_50C_GATE_N:
+        # Pre-gate: watch-tier informational only
+        findings.append({
+            "class": "DECISION_WATCH",
+            "topic": "kalshi-15m-50c-zone",
+            "n_total": total_n,
+            "gate_n": KALSHI_50C_GATE_N,
+            "sub_50":  {**buckets["sub_50"],  "pnl": round(buckets["sub_50"]["pnl"], 2)},
+            "50_plus": {**buckets["50_plus"], "pnl": round(buckets["50_plus"]["pnl"], 2)},
+            "severity": "watch",
+            "proposed_action": (
+                f"Kalshi 15m-live 50¢-zone watch (n={total_n}, gate={KALSHI_50C_GATE_N}). "
+                f"Pre-gate split: sub-50 W/L {buckets['sub_50']['w']}/{buckets['sub_50']['l']} "
+                f"pnl ${buckets['sub_50']['pnl']:+.2f} | 50+ "
+                f"W/L {buckets['50_plus']['w']}/{buckets['50_plus']['l']} "
+                f"pnl ${buckets['50_plus']['pnl']:+.2f}. No filter decision yet — accumulating."
+            ),
+        })
+        return findings
+
+    # Gate hit (n>=20): produce a recommend/skip on the 50¢ bucket
+    sub = buckets["sub_50"]
+    plus = buckets["50_plus"]
+    sub_ev = sub["pnl"] / sub["n"] if sub["n"] else 0
+    plus_ev = plus["pnl"] / plus["n"] if plus["n"] else 0
+    # Recommend EXCLUSION of 50¢-bucket if plus_ev < 0 AND sub_ev > plus_ev
+    recommend_exclude = plus_ev < 0 and sub_ev > plus_ev
+    rec_text = "RECOMMEND: add 50¢-exclusion filter (live data shows clear divergence)" if recommend_exclude else \
+               "RECOMMEND: skip filter — 50¢-zone not yet underperforming clearly"
+    findings.append({
+        "class": "DECISION_TRIGGER",
+        "topic": "kalshi-15m-50c-zone",
+        "n_total": total_n,
+        "sub_50":  {**sub,  "pnl": round(sub["pnl"], 2),  "ev": round(sub_ev, 2)},
+        "50_plus": {**plus, "pnl": round(plus["pnl"], 2), "ev": round(plus_ev, 2)},
+        "recommend_exclude": recommend_exclude,
+        "severity": "medium",
+        "proposed_action": (
+            f"Kalshi 15m-live 50¢-zone: n={total_n} (gate cleared). "
+            f"sub-50: W/L {sub['w']}/{sub['l']} pnl ${sub['pnl']:+.2f} ev ${sub_ev:+.2f}. "
+            f"50+: W/L {plus['w']}/{plus['l']} pnl ${plus['pnl']:+.2f} ev ${plus_ev:+.2f}. "
+            f"{rec_text}."
+        ),
+    })
+    return findings
+
+
 def run_smallcap(summary: dict) -> dict:
     """Smallcap-bot anomaly run — parallel structure to run_kalshi().
 
@@ -666,6 +784,13 @@ def detect_proposed_actions_v2(bot_dir: Path = Path("/Users/terry/kalshi-bot"),
     # Kalshi
     kalshi_result = run_kalshi(bot_dir)
     for finding in kalshi_result["findings"]:
+        cls = finding["class"]
+        tier = "B" if finding.get("severity") in ("high", "medium") else "C"
+        text = f"→ [kalshi/{cls}] {finding['proposed_action']}"
+        actions.append((text, tier, cite_v2))
+
+    # Kalshi 50¢-zone DECISION_TRIGGER / WATCH (Airy proposal May-17)
+    for finding in detect_kalshi_50c_zone(bot_dir):
         cls = finding["class"]
         tier = "B" if finding.get("severity") in ("high", "medium") else "C"
         text = f"→ [kalshi/{cls}] {finding['proposed_action']}"

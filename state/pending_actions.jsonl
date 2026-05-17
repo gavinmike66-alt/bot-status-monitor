@@ -8,3 +8,4 @@
 {"id": "act_ad57df", "ts": "2026-05-16T22:39:01.447262+00:00", "event": "resolution", "resolution": "skipped", "by": "v0.11-paused-aware-fix-cleanup"}
 {"id": "act_f41291", "ts": "2026-05-16T22:43:34.682581+00:00", "tier": "B", "action": "[smallcap/TEST] auto-log integration test action", "rationale": "", "rule_cited": "test", "status": "pending"}
 {"id": "act_f41291", "ts": "2026-05-16T22:43:34.682759+00:00", "event": "resolution", "resolution": "approved", "by": "terry-v0.13-test"}
+{"id": "act_11a525", "ts": "2026-05-17T14:42:08.421987+00:00", "tier": "C", "action": "\u2192 [kalshi/DECISION_WATCH] Kalshi 15m-live 50\u00a2-zone watch (n=5, gate=20). Pre-gate split: sub-50 W/L 3/0 pnl $+9.84 | 50+ W/L 0/2 pnl $-10.34. No filter decision yet \u2014 accumulating.", "rationale": "", "rule_cited": "anomalies_v2.py \u00a7 detection (May-16 META-extension)", "status": "pending"}
